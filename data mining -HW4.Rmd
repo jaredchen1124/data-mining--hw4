@@ -1,0 +1,201 @@
+---
+Title: "Data mining exercise4"
+date: 05/02/2022
+output: md_document
+Author: JIYOU CHEN， LIMING PANG， YUXIN FENG
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(readr)
+library(modelr)
+library(tidyverse)
+library(mosaic)
+library(ggplot2)
+library(LICORS)
+library(foreach)
+library(tm)
+library(slam)
+library(proxy)
+library(arules)
+library(arulesViz)
+library(igraph)
+library(gamlr)
+library(SnowballC)
+library(class)
+library(foreach)
+```
+
+
+
+
+# Question 1
+## using clusters to distinguish the color   
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+wine <- read.csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/wine.csv")
+summary(wine)
+W = wine[,-(12:13)]
+wine_scale = scale(W, center=TRUE, scale=TRUE)
+
+mu = attr(W,"scaled:center")
+sigma = attr(W,"scaled:scale")
+cluster1 = kmeanspp(W, 2, nstart=25)
+cluster1$center
+cluster1$center[1,]*sigma + mu
+cluster1$center[2,]*sigma + mu
+which(cluster1$cluster == 1)
+which(cluster1$cluster == 2)
+qplot(fixed.acidity, volatile.acidity, data=wine, color=factor(cluster1$cluster))
+qplot(fixed.acidity, volatile.acidity, data=wine, color=factor(color))
+```
+Take acidity(fixed & volatile) as the factor, it is obvious that we can distinguish white wine and red wine because of the discrete distribution of them. However, we can hardly distinguish the quality of them.
+
+Now, since we can distinguish the color, only thing we need to do is using PCA to draw the conclusion.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+cluster2 = kmeanspp(W, 7, nstart=25)
+cluster2$center
+cluster2$center[1,]*sigma + mu
+cluster2$center[2,]*sigma + mu
+
+which(cluster2$cluster == 1)
+which(cluster2$cluster == 2)
+
+qplot(fixed.acidity, volatile.acidity, data=wine, color=factor(cluster2$cluster))
+qplot(fixed.acidity, volatile.acidity, data=wine, color=factor(quality))
+```
+##using PCA for further analysis
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+pc_W = prcomp(W, rank=1)
+summary(pc_W)
+pc_W$rotation
+```
+The PCA chart explains that cumulative proportion is above 95%.
+Although we cannot draw the conclusion from the clusters above that which factor effects the quality of the wine, we do know that coef of surfur.dioxide, volatile.acidity, and residual.sugar are pretty strong.
+
+As result, take both the clusters and PCA into consideration, it's easy for us to distinguish the color of the wine with only the factor of acidity, and hard to distinguish the quality of the wine. 
+
+
+
+
+
+# Problem 2
+## Summarize the data
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+socialmarketing <- read.csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/social_marketing.csv", row.names=1)
+summary(socialmarketing)
+```
+
+## center and scale the data & analysis
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+PCA2=prcomp(socialmarketing-socialmarketing$uncategorized-socialmarketing$spam-socialmarketing$adult, scale=TRUE)
+
+pve=PCA2$sdev^2/sum(PCA2$sdev^2)
+plot(pve, type="o", ylab="PVE", xlab="Principal Component", main="Figure1. PVE")
+plot(cumsum(pve), type="o", ylab="Cumulative PVE", xlab="Principal Component", main="Figure2. Cumulative PVE")
+summary(PCA2)
+```
+
+From the figure2 of the cumulative PVE plot above, we can know the number of principle components that will be needed since that the first 11 components are able to explain above 90% the variances of data. 
+Therefore, we choose 11 principle components to do the analysis.
+## PCA
+```{r message=FALSE, warning=FALSE, include=FALSE}
+round(PCA2$rotation[,1:11],2)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+PCA2$rotation[,1:11]
+```
+
+Using this way to find correlation, we can find some correlated categories through the values in the matrix.
+
+For instance, the forth PC group really cares about online games and college&uni. Also, people in this group don't care about politics at all. According to these hints, we can know that people in this group are mostly high school students or undergraduates.
+
+Hence, with these value, the firm can know what customers are interested in, and focus on these categories to satisfy the needs of specific categories of customers in each market segment.
+
+
+
+# Question 3
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+library(readr)
+library(modelr)
+library(tidyverse)
+library(mosaic)
+library(ggplot2)
+library(arules) 
+library(arulesViz)
+library(igraph)
+```
+
+## spliting data into a list of goods for each customer
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+groceries = read.csv("https://raw.githubusercontent.com/jgscott/ECO395M/master/data/groceries.txt",header = FALSE)
+groceries$buyer = seq.int(nrow(groceries))
+groceries = cbind(groceries[,5], stack(lapply(groceries[,1:4], as.character)))[1:2]
+colnames(groceries) = c("Customer","Goods")
+groceries = groceries[order(groceries$Customer),]
+groceries = groceries[!(groceries$Goods==""),]
+row.names(groceries) = 1:nrow(groceries)
+groceries$Customer = factor(groceries$Customer)
+groceries_counts = groceries %>%
+  group_by(Goods) %>%
+  summarize(count = n()) %>%
+  arrange(desc(count))
+```
+
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+head(groceries_counts, 30) %>%
+  ggplot() +
+  geom_col(aes(y=reorder(Goods, count), x=count)) + 
+  labs(y="Goods",x="Counts")
+```
+
+We generated the graph that shows the top 30 goods among our customers in dataset. The number of various products is gradually decreasing, except whole milk, other vegetables, rolls, soda, and yogurt. These five are the top 5 most popular goods.
+
+## run the apriori algorithm and make a plot of all the rules below
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+
+groceries_list = split(x=groceries$Goods, f=groceries$Customer)
+
+groceries_list = lapply(groceries_list, unique)
+
+groceries_trans = as(groceries_list, "transactions")
+```
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+rules = apriori(groceries_trans, 
+                    parameter=list(support=0.005, confidence=0.1, maxlen=2))
+
+```
+
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+plot(rules, measure = c("support", "lift"), shading = "confidence")
+```
+
+The plot shows that there are so many rules here that makes it difficult for us to learn about the association rules well.
+
+```{r, echo=FALSE,message=FALSE, warning=FALSE}
+sub1 = subset(rules, subset=confidence > 0.01 & support > 0.005)
+summary(sub1)
+
+plot(head(sub1, 50, by='lift'), method='graph')
+```
+After several times of adjustment, we set 50 rules for simplicity. Although these kinds of association are not very obvious, the graph above shows some rules for grocery purchases. 
+
+Still, to some extent, we can find some connection between the graph and our real life. For instance, yogurt, sour cream, and cream cheese all point to the whole milk according to the lift and support. There are some other rules demonstrated in the graph, though these rules are not as obvious as the whole dairy products.    
+
+
+
+
+
+
+
